@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-RIGGING_MESSAGE = 'Time to rig some people in! React with 🎉 to participate!'
+DEFAULT_RIGGING_MESSAGE = 'Time to rig some people in! React with 🎉 to participate!'
 
 
 @dataclass
@@ -23,6 +23,7 @@ class RiggingConfig:
     duration: int = 120
     winner_role: str = 'rigged'
     admin_role: str = None
+    message: str = DEFAULT_RIGGING_MESSAGE
 
 
 @dataclass
@@ -132,7 +133,7 @@ class Rigging(Cog):
             self.rigging[guild.id].winners_count = amount
             channel_id = int(self.config[guild.id].channel[2:-1])
             channel = self.bot.get_channel(channel_id)
-            message = await channel.send(RIGGING_MESSAGE)
+            message = await channel.send(self.config[guild.id].message)
             self.rigging[guild.id].message_id = message.id
             await message.add_reaction('🎉')
             await ctx.send(f'Started a rigging in {self.config[guild.id].channel} for {amount} winners')
@@ -159,7 +160,7 @@ class Rigging(Cog):
             await member.add_roles(winner_role, reason="rigged")
         self.rigging[guild.id].winners += [w.id for w in winners]
         winners_as_string = "\n".join([f'<@{w}>' for w in self.rigging[guild.id].winners])
-        await message.edit(content=RIGGING_MESSAGE + f'\nWinners:\n{winners_as_string}')
+        await message.edit(content=self.config[guild.id].message + f'\nWinners:\n{winners_as_string}')
         self.save_rigging()
 
     async def resolve_winner_role(self, guild) -> Role:
@@ -188,14 +189,15 @@ class Rigging(Cog):
             await ctx.send(f'Current configuration:\n{self.config[guild.id]}')
             return
 
-        if not len(args) == 2:
+        if len(args) < 2:
             await ctx.send(
                 'You need to give me the name and the new value to update a config setting\n'
                 'Example: `!rig config duration 1337` _set duration to 1337 seconds_'
             )
             return
 
-        property_to_modify, new_value_tmp = args
+        property_to_modify = args[0]
+        new_value_tmp = args[1]
         if not hasattr(self.config[guild.id], property_to_modify):
             await ctx.send(f'Unknown property.\nAvailable properties: {self.config[guild.id]}')
             return
@@ -208,6 +210,9 @@ class Rigging(Cog):
             except ValueError:
                 await ctx.send(f'New value for {property_to_modify} must be a number :neutral_face:')
                 return
+
+            if property_to_modify == 'message':
+                new_value = ' '.join(args[1:])
 
             self.config[guild.id].__setattr__(property_to_modify, new_value)
             self.save_config()
@@ -222,7 +227,7 @@ class Rigging(Cog):
             return
         await self.cleanup_previous_riggings(ctx.guild)
         message = await self.get_rigging_message(ctx.guild)
-        await message.edit(content=RIGGING_MESSAGE + f'\n_this rigging has been cancelled_')
+        await message.edit(content=self.config[ctx.guild.id].message + f'\n_this rigging has been cancelled_')
         self.rigging[ctx.guild.id] = None
         await ctx.send(f'rigging cancelled')
         self.save_rigging()
