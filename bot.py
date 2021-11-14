@@ -20,11 +20,14 @@ DEFAULT_RIGGING_MESSAGE = 'Time to rig some people in! React with 🎉 to partic
 
 @dataclass
 class RiggingConfig:
-    channel: str = '#general'
+    channel: str = None
     duration: int = 120
-    winner_role: str = 'rigged'
+    winner_role: str = None
     admin_role: str = None
     message: str = DEFAULT_RIGGING_MESSAGE
+
+    def needs_configuration(self):
+        return self.channel is None or self.winner_role is None
 
 
 @dataclass
@@ -101,6 +104,9 @@ class Rigging(Cog):
         author: User = message.author
         print(f'user:{author.name}\nargs:{args}\n-----')
 
+        if guild.id not in self.config:
+            self.config[guild.id] = RiggingConfig()
+
         if self.config[guild.id].admin_role:
             admin_role = await self.resolve_admin_role(guild)
             member = await guild.fetch_member(author.id)
@@ -111,16 +117,19 @@ class Rigging(Cog):
             await self.print_help(ctx)
             return
 
+        if args[0] == 'config':
+            await self.process_config(ctx, args[1:])
+            return
+        elif self.config[guild.id].needs_configuration():
+            await ctx.send(f'Please fully configure the settings first.\nCurrent configuration:\n{self.config[guild.id]}')
+            return
+
         if args[0] == 'cancel':
             await self.process_cancel(ctx)
             return
 
         if args[0] == 'cleanup':
             await self.process_cleanup(ctx)
-            return
-
-        if args[0] == 'config':
-            await self.process_config(ctx, args[1:])
             return
 
         try:
