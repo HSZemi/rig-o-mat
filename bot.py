@@ -136,6 +136,9 @@ class Rigging(Cog):
             if args[0].isnumeric():
                 duration = int(args[0])
             elif args[0] == 'more':
+                if guild.id not in self.rigging or not self.rigging[guild.id]:
+                    await ctx.send("No ongoing rigging.")
+                    return
                 self.rigging[guild.id].winners_count += amount
                 await self.pick_winners(guild)
                 return
