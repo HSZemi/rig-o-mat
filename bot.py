@@ -113,6 +113,10 @@ class Rigging(Cog):
             await self.process_cancel(ctx)
             return
 
+        if args[0] == 'cleanup':
+            await self.process_cleanup(ctx)
+            return
+
         if args[0] == 'config':
             await self.process_config(ctx, args[1:])
             return
@@ -232,6 +236,13 @@ class Rigging(Cog):
         await ctx.send(f'rigging cancelled')
         self.save_rigging()
 
+    async def process_cleanup(self, ctx):
+        if ctx.guild.id not in self.rigging or not self.rigging[ctx.guild.id]:
+            await ctx.send(f'no rigging to clean up')
+            return
+        await self.cleanup_previous_riggings(ctx.guild)
+        await ctx.send(f'rigging cleaned up')
+
     async def print_help(self, ctx: Context):
         help_text = textwrap.dedent('''
             Usage examples:
@@ -240,6 +251,7 @@ class Rigging(Cog):
             `!rig config`  _print the current configuration_
             `!rig config channel #general`  _set the channel where the rigging takes place to #general_
             `!rig cancel`  _cancel an ongoing rigging and reset the roles_
+            `!rig cleanup`  _only reset the roles_
             ''')
         await ctx.send(help_text)
 
