@@ -5,6 +5,7 @@ import os
 import random
 import textwrap
 from dataclasses import dataclass, asdict, field
+import time
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -14,7 +15,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-DEFAULT_RIGGING_MESSAGE = 'Time to rig some people in! React with 🎉 to participate!'
+DEFAULT_RIGGING_MESSAGE = 'Time to rig some people in! React with 🎉 to participate! Ends: %t'
 
 
 @dataclass
@@ -31,6 +32,7 @@ class RiggingProperties:
     message_id: str = None
     winners: List[str] = field(default_factory=list)
     winners_count: int = 0
+    end_time: int = 0
 
 
 class RigBot(Bot):
@@ -148,9 +150,10 @@ class Rigging(Cog):
         await self.cleanup_previous_riggings(guild)
         self.rigging[guild.id] = RiggingProperties()
         self.rigging[guild.id].winners_count = amount
+        self.rigging[guild.id].end_time = int(time.time()) + duration
         channel_id = int(self.config[guild.id].channel[2:-1])
         channel = self.bot.get_channel(channel_id)
-        message = await channel.send(self.config[guild.id].message)
+        message = await channel.send(self.get_initial_message(guild))
         self.rigging[guild.id].message_id = message.id
         await message.add_reaction('🎉')
         await ctx.send(
@@ -159,6 +162,10 @@ class Rigging(Cog):
         self.save_rigging()
         await asyncio.sleep(duration)
         await self.pick_winners(guild)
+
+    def get_initial_message(self, guild):
+        end_time = self.rigging[guild.id].end_time
+        return self.config[guild.id].message.replace('%t', f'<t:{end_time}>')
 
     async def pick_winners(self, guild: Guild):
         if not self.rigging[guild.id]:
@@ -174,7 +181,7 @@ class Rigging(Cog):
             await member.add_roles(winner_role, reason="rigged")
         self.rigging[guild.id].winners += [w.id for w in winners]
         winners_as_string = "\n".join([f'<@{w}>' for w in self.rigging[guild.id].winners])
-        await message.edit(content=self.config[guild.id].message + f'\nWinners:\n{winners_as_string}')
+        await message.edit(content=self.get_initial_message(guild) + f'\nWinners:\n{winners_as_string}')
         self.save_rigging()
 
     async def resolve_winner_role(self, guild) -> Role:
@@ -241,7 +248,7 @@ class Rigging(Cog):
             return
         await self.cleanup_previous_riggings(ctx.guild)
         message = await self.get_rigging_message(ctx.guild)
-        await message.edit(content=self.config[ctx.guild.id].message + f'\n_this rigging has been cancelled_')
+        await message.edit(content=self.get_initial_message(ctx.guild) + f'\n_this rigging has been cancelled_')
         self.rigging[ctx.guild.id] = None
         await ctx.send(f'rigging cancelled')
         self.save_rigging()
