@@ -131,24 +131,31 @@ class Rigging(Cog):
 
     async def rig_amount(self, ctx, amount: int, args):
         guild = ctx.guild
-        if not len(args):
-            await self.cleanup_previous_riggings(guild)
-            self.rigging[guild.id] = RiggingProperties()
-            self.rigging[guild.id].winners_count = amount
-            channel_id = int(self.config[guild.id].channel[2:-1])
-            channel = self.bot.get_channel(channel_id)
-            message = await channel.send(self.config[guild.id].message)
-            self.rigging[guild.id].message_id = message.id
-            await message.add_reaction('🎉')
-            await ctx.send(f'Started a rigging in {self.config[guild.id].channel} for {amount} winners')
-            self.save_rigging()
-            await asyncio.sleep(self.config[guild.id].duration)
-            await self.pick_winners(guild)
-        elif args[0] == 'more':
-            self.rigging[guild.id].winners_count += amount
-            await self.pick_winners(guild)
-        else:
-            await ctx.send(f'Unknown arguments :frowning:')
+        duration = self.config[guild.id].duration
+        if len(args) > 0:
+            if args[0].isnumeric():
+                duration = int(args[0])
+            elif args[0] == 'more':
+                self.rigging[guild.id].winners_count += amount
+                await self.pick_winners(guild)
+                return
+            else:
+                await ctx.send(f'Unknown arguments :frowning:')
+                return
+        await self.cleanup_previous_riggings(guild)
+        self.rigging[guild.id] = RiggingProperties()
+        self.rigging[guild.id].winners_count = amount
+        channel_id = int(self.config[guild.id].channel[2:-1])
+        channel = self.bot.get_channel(channel_id)
+        message = await channel.send(self.config[guild.id].message)
+        self.rigging[guild.id].message_id = message.id
+        await message.add_reaction('🎉')
+        await ctx.send(
+            f'Started a rigging in {self.config[guild.id].channel} for {amount} winners.\nDuration: {duration}s'
+        )
+        self.save_rigging()
+        await asyncio.sleep(duration)
+        await self.pick_winners(guild)
 
     async def pick_winners(self, guild: Guild):
         if not self.rigging[guild.id]:
@@ -247,6 +254,7 @@ class Rigging(Cog):
         help_text = textwrap.dedent('''
             Usage examples:
             `!rig 7`  _start a new rigged drawing for seven people_
+            `!rig 7 180`  _start a new rigged drawing for seven people and 180 seconds instead of the default duration_
             `!rig 2 more`  _rig two more people into the current game_
             `!rig config`  _print the current configuration_
             `!rig config channel #general`  _set the channel where the rigging takes place to #general_
