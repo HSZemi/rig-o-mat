@@ -183,7 +183,7 @@ class Rigging(Cog):
         eligible_users = await self.get_eligible_users(guild, message)
         number_of_winners_to_pick = self.rigging[guild.id].winners_count - len(self.rigging[guild.id].winners)
         number_of_winners_to_pick = min(number_of_winners_to_pick, len(eligible_users))
-        winners = random.choices(eligible_users, k=number_of_winners_to_pick)
+        winners = random.sample(eligible_users, k=number_of_winners_to_pick)
         winner_role = await self.resolve_winner_role(guild)
         for winner in winners:
             member: Member = await guild.fetch_member(winner.id)
