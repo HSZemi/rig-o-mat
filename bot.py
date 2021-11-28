@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 DEFAULT_RIGGING_MESSAGE = 'Time to rig some people in! React with 🎉 to participate! Ends: %t'
+DEFAULT_COORDINATION_MESSAGE = '%r use this channel share the game data and coordinate. glhf!'
 
 
 @dataclass
@@ -25,9 +26,11 @@ class RiggingConfig:
     winner_role: str = None
     admin_role: str = None
     message: str = DEFAULT_RIGGING_MESSAGE
+    coordination_channel: str = None
+    coordination_message: str = DEFAULT_COORDINATION_MESSAGE
 
     def needs_configuration(self):
-        return self.channel is None or self.winner_role is None
+        return self.channel is None or self.winner_role is None or self.coordination_channel is None
 
 
 @dataclass
@@ -176,6 +179,10 @@ class Rigging(Cog):
         end_time = self.rigging[guild.id].end_time
         return self.config[guild.id].message.replace('%t', f'<t:{end_time}>')
 
+    def get_coordination_message(self, guild):
+        winner_role = self.config[guild.id].winner_role
+        return self.config[guild.id].coordination_message.replace('%r', winner_role)
+
     async def pick_winners(self, guild: Guild):
         if not self.rigging[guild.id]:
             return
@@ -191,7 +198,13 @@ class Rigging(Cog):
         self.rigging[guild.id].winners += [w.id for w in winners]
         winners_as_string = "\n".join([f'<@{w}>' for w in self.rigging[guild.id].winners])
         await message.edit(content=self.get_initial_message(guild) + f'\nWinners:\n{winners_as_string}')
+        await self.send_coordination_message(guild)
         self.save_rigging()
+
+    async def send_coordination_message(self, guild):
+        channel_id = int(self.config[guild.id].coordination_channel[2:-1])
+        channel = self.bot.get_channel(channel_id)
+        await channel.send(self.get_coordination_message(guild))
 
     async def resolve_winner_role(self, guild) -> Role:
         return guild.get_role(int(self.config[guild.id].winner_role[3:-1]))
@@ -241,7 +254,7 @@ class Rigging(Cog):
                 await ctx.send(f'New value for {property_to_modify} must be a number :neutral_face:')
                 return
 
-            if property_to_modify == 'message':
+            if 'message' in property_to_modify:
                 new_value = ' '.join(args[1:])
 
             self.config[guild.id].__setattr__(property_to_modify, new_value)
