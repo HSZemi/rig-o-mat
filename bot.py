@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import List, Dict, Optional
 
-from discord import Message, Role, User, Guild, Member
+from discord import Message, Role, User, Guild, Member, HTTPException
 from discord.ext.commands import Bot, command, Cog, Context
 from dotenv import load_dotenv
 
@@ -300,9 +300,13 @@ class Rigging(Cog):
             return
         winner_role: Role = await self.resolve_winner_role(guild)
         for winner_id in self.rigging[guild.id].winners:
-            member: Member = await guild.fetch_member(winner_id)
-            if member:
-                await member.remove_roles(winner_role, reason="cleanup")
+            try:
+                member: Member = await guild.fetch_member(winner_id)
+                if member:
+                    await member.remove_roles(winner_role, reason="cleanup")
+            except HTTPException as e:
+                print(f'Could not remove role from member "{winner_id}":')
+                print(e.text)
 
 
 def main():
