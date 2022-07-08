@@ -95,7 +95,7 @@ class Rigging(Cog):
         config_dump = {}
         for key in self.config:
             config_dump[key] = asdict(self.config[key])
-        self.config_path.write_text(json.dumps(config_dump))
+        self.config_path.write_text(json.dumps(config_dump, indent=2))
 
     def save_rigging(self):
         print(f'Saving new rigging: {self.rigging}')
@@ -103,7 +103,7 @@ class Rigging(Cog):
         for key in self.rigging:
             if self.rigging[key]:
                 rigging_dump[key] = asdict(self.rigging[key])
-        self.rigging_path.write_text(json.dumps(rigging_dump))
+        self.rigging_path.write_text(json.dumps(rigging_dump, indent=2))
 
     @command(name='rig')
     async def _rig(self, ctx: Context, *args):
