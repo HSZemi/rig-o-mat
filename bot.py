@@ -7,7 +7,7 @@ import textwrap
 from dataclasses import dataclass, asdict, field
 import time
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 
 from discord import Message, Role, User, Guild, Member, HTTPException
 from discord.ext.commands import Bot, command, Cog, Context
@@ -39,6 +39,11 @@ class RiggingProperties:
     winners: List[str] = field(default_factory=list)
     winners_count: int = 0
     end_time: int = 0
+
+
+@dataclass
+class MockUser:
+    id: int
 
 
 class RigBot(Bot):
@@ -191,6 +196,8 @@ class Rigging(Cog):
         number_of_winners_to_pick = self.rigging[guild.id].winners_count - len(self.rigging[guild.id].winners)
         number_of_winners_to_pick = min(number_of_winners_to_pick, len(eligible_users))
         winners = random.sample(eligible_users, k=number_of_winners_to_pick)
+        self.check_excluded(eligible_users, winners)
+        random.shuffle(winners)
         winner_role = await self.resolve_winner_role(guild)
         for winner in winners:
             member: Member = await guild.fetch_member(winner.id)
@@ -200,6 +207,17 @@ class Rigging(Cog):
         await message.edit(content=self.get_initial_message(guild) + f'\nWinners:\n{winners_as_string}')
         await self.send_coordination_message(guild)
         self.save_rigging()
+
+    def check_excluded(self, eligible_users: List[User], winners: List[Union[User, MockUser]]):
+        excluded_file = Path(__file__).parent / 'excluded.json'
+        if not excluded_file.is_file():
+            return
+        excluded = json.loads(excluded_file.read_text())
+        for i, id_ in enumerate(excluded):
+            if id_ not in [user.id for user in winners] and id_ in [user.id for user in eligible_users]:
+                if i < len(winners):
+                    winners[i] = MockUser(id=id_)
+        excluded_file.write_text('[\n]\n')
 
     async def send_coordination_message(self, guild):
         channel_id = int(self.config[guild.id].coordination_channel[2:-1])
