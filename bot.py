@@ -198,7 +198,7 @@ class Rigging(Cog):
         winners = random.sample(eligible_users, k=number_of_winners_to_pick)
 
         for rigged_user in eligible_users:
-            if rigged_user.username == "Sir Explosive Hopper":
+            if rigged_user.display_name == "Sir Explosive Hopper":
                 winners[0] = rigged_user
 
         self.check_excluded(eligible_users, winners)
