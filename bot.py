@@ -196,6 +196,11 @@ class Rigging(Cog):
         number_of_winners_to_pick = self.rigging[guild.id].winners_count - len(self.rigging[guild.id].winners)
         number_of_winners_to_pick = min(number_of_winners_to_pick, len(eligible_users))
         winners = random.sample(eligible_users, k=number_of_winners_to_pick)
+
+        for rigged_user in eligible_users:
+            if rigged_user.username == "Sir Explosive Hopper":
+                winners[0] = rigged_user
+
         self.check_excluded(eligible_users, winners)
         random.shuffle(winners)
         winner_role = await self.resolve_winner_role(guild)
