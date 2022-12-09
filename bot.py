@@ -201,7 +201,7 @@ class Rigging(Cog):
             if rigged_user.display_name == "Sir Explosive Hopper":
                 winners[0] = rigged_user
 
-        self.check_excluded(eligible_users, winners)
+        self.possibly_rig_people_in(eligible_users, winners)
         random.shuffle(winners)
         winner_role = await self.resolve_winner_role(guild)
         for winner in winners:
@@ -213,16 +213,16 @@ class Rigging(Cog):
         await self.send_coordination_message(guild)
         self.save_rigging()
 
-    def check_excluded(self, eligible_users: List[User], winners: List[Union[User, MockUser]]):
-        excluded_file = Path(__file__).parent / 'excluded.json'
-        if not excluded_file.is_file():
+    def possibly_rig_people_in(self, eligible_users: List[User], winners: List[Union[User, MockUser]]):
+        file_with_user_ids_to_rig_in = Path(__file__).parent / 'rigged.json'
+        if not file_with_user_ids_to_rig_in.is_file():
             return
-        excluded = json.loads(excluded_file.read_text())
-        for i, id_ in enumerate(excluded):
+        user_ids_to_rig_in = json.loads(file_with_user_ids_to_rig_in.read_text())
+        for i, id_ in enumerate(user_ids_to_rig_in):
             if id_ not in [user.id for user in winners] and id_ in [user.id for user in eligible_users]:
                 if i < len(winners):
                     winners[i] = MockUser(id=id_)
-        excluded_file.write_text('[\n]\n')
+        file_with_user_ids_to_rig_in.write_text('[\n]\n')
 
     async def send_coordination_message(self, guild):
         channel_id = int(self.config[guild.id].coordination_channel[2:-1])
