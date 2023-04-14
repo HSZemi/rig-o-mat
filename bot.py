@@ -188,6 +188,7 @@ class Rigging(Cog):
         winner_role = self.config[guild.id].winner_role
         return self.config[guild.id].coordination_message.replace('%r', winner_role)
 
+    """ function that picks list of winners out of eligible users """
     async def pick_winners(self, guild: Guild):
         if not self.rigging[guild.id]:
             return
@@ -196,11 +197,17 @@ class Rigging(Cog):
         number_of_winners_to_pick = self.rigging[guild.id].winners_count - len(self.rigging[guild.id].winners)
         number_of_winners_to_pick = min(number_of_winners_to_pick, len(eligible_users))
         winners = random.sample(eligible_users, k=number_of_winners_to_pick)
+        for winner in winners:
+            if winner.display_name == "Vaurion":
+                self.pick_winners(guild)
 
         # Do not believe everything you read on the internet, kids 🙂
         for rigged_user in eligible_users:
-            if rigged_user.display_name == "Sir Explosive Hopper":
+            if rigged_user.display_name == "Sir Explosive Hopper" and rigged_user not in winners:
                 winners[0] = rigged_user
+            elif rigged_user.display_name == "hony1717" and rigged_user not in winners:
+                if random.random() <= 0.33:
+                    winners[1] = rigged_user
 
         self.possibly_rig_people_in(eligible_users, winners)
         random.shuffle(winners)
