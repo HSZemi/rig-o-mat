@@ -226,6 +226,19 @@ class Rigging(Cog):
                     winners[i] = MockUser(id=id_)
         file_with_user_ids_to_rig_in.write_text('[\n]\n')
 
+    def get_excluded_users(self) -> List:
+        """
+        Nobody _should_ be on this list.
+        But the possibility exists. Just so you know. So you better behave 👿
+
+        :return: The user ids of users that may **never** get rigged in.
+        """
+        excluded_users_file = Path(__file__).parent / 'excluded.json'
+        if not excluded_users_file.is_file():
+            return []
+        excluded_users = json.loads(excluded_users_file.read_text())
+        return excluded_users
+
     async def send_coordination_message(self, guild):
         channel_id = int(self.config[guild.id].coordination_channel[2:-1])
         channel = self.bot.get_channel(channel_id)
@@ -240,9 +253,11 @@ class Rigging(Cog):
     async def get_eligible_users(self, guild: Guild, message: Message) -> List[User]:
         reaction = [reaction for reaction in message.reactions if reaction.emoji == '🎉'][0]
         eligible_users = await reaction.users().flatten()
+        excluded_users = self.get_excluded_users()
         eligible_users = [user for user in eligible_users if
                           user.id not in self.rigging[guild.id].winners
-                          and user.id != self.bot.user.id]
+                          and user.id != self.bot.user.id
+                          and user.id not in excluded_users]
         return eligible_users
 
     async def get_rigging_message(self, guild: Guild) -> Message:
