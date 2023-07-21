@@ -196,12 +196,6 @@ class Rigging(Cog):
         number_of_winners_to_pick = self.rigging[guild.id].winners_count - len(self.rigging[guild.id].winners)
         number_of_winners_to_pick = min(number_of_winners_to_pick, len(eligible_users))
         winners = random.sample(eligible_users, k=number_of_winners_to_pick)
-
-        # Do not believe everything you read on the internet, kids 🙂
-        for rigged_user in eligible_users:
-            if rigged_user.display_name == "Sir Explosive Hopper":
-                winners[0] = rigged_user
-
         self.possibly_rig_people_in(eligible_users, winners)
         random.shuffle(winners)
         winner_role = await self.resolve_winner_role(guild)
@@ -215,6 +209,13 @@ class Rigging(Cog):
         self.save_rigging()
 
     def possibly_rig_people_in(self, eligible_users: List[User], winners: List[Union[User, MockUser]]):
+        """
+        Ok, so this bot has the option to rig people in.
+        It might get used. It might not.
+        The catch: You cannot tell if it is used or not.
+        You gotta live with that uncertainty 🙂
+        And also: You cannot even be sure if this is the actual code that the bot runs 😶
+        """
         file_with_user_ids_to_rig_in = Path(__file__).parent / 'rigged.json'
         if not file_with_user_ids_to_rig_in.is_file():
             return
