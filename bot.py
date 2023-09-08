@@ -4,13 +4,15 @@ import json
 import os
 import random
 import textwrap
-from dataclasses import dataclass, asdict, field
 import time
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import List, Dict, Optional, Union
 
-from discord import Message, Role, User, Guild, Member, HTTPException
-from discord.ext.commands import Bot, command, Cog, Context
+from discord import Intents
+from discord import Message, Role, User, Guild, Member, HTTPException, RateLimited
+from discord.ext.commands import Bot
+from discord.ext.commands import command, Cog, Context
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -28,6 +30,7 @@ class RiggingConfig:
     message: str = DEFAULT_RIGGING_MESSAGE
     coordination_channel: str = None
     coordination_message: str = DEFAULT_COORDINATION_MESSAGE
+    weights: Dict[str, int] = field(default_factory=dict)
 
     def needs_configuration(self):
         return self.channel is None or self.winner_role is None or self.coordination_channel is None
@@ -39,6 +42,12 @@ class RiggingProperties:
     winners: List[str] = field(default_factory=list)
     winners_count: int = 0
     end_time: int = 0
+
+
+@dataclass
+class RolesForUser:
+    roles: List[str] = field(default_factory=list)
+    expires: int = 0
 
 
 @dataclass
@@ -63,10 +72,13 @@ class Rigging(Cog):
         self.bot = bot
         self.rigging: Dict[int, Optional[RiggingProperties]] = {}
         self.config: Dict[int, RiggingConfig] = {}
+        self.roles_cache: Dict[int, Dict[str, RolesForUser]] = {}
         self.rigging_path = Path(__file__).with_name('rigging.json')
         self.config_path = Path(__file__).with_name('config.json')
+        self.roles_cache_path = Path(__file__).with_name('roles-cache.json')
         self.load_config()
         self.load_rigging()
+        self.load_roles_cache()
 
     def load_config(self):
         if self.config_path.is_file():
@@ -92,6 +104,20 @@ class Rigging(Cog):
             except Exception as e:
                 print(f'Could not load rigging: {e}')
 
+    def load_roles_cache(self):
+        if self.roles_cache_path.is_file():
+            try:
+                roles_cache = json.loads(self.roles_cache_path.read_text())
+                loaded_roles_cache = {}
+                for guild_key, guild_data in roles_cache.items():
+                    loaded_roles_cache[int(guild_key)] = {}
+                    for user, value in guild_data.items():
+                        loaded_roles_cache[int(guild_key)][user] = RolesForUser(**value)
+                self.roles_cache = loaded_roles_cache
+                print(f'Loaded roles cache: {self.roles_cache}')
+            except Exception as e:
+                print(f'Could not load roles cache: {e}')
+
     def save_config(self):
         print(f'Saving new config: {self.config}')
         config_dump = {}
@@ -106,6 +132,17 @@ class Rigging(Cog):
             if self.rigging[key]:
                 rigging_dump[key] = asdict(self.rigging[key])
         self.rigging_path.write_text(json.dumps(rigging_dump, indent=2))
+
+    def save_roles_cache(self):
+        print(f'Saving roles cache: {self.roles_cache}')
+        now = time.time()
+        roles_cache_dump = {}
+        for guild_id, guild_data in self.roles_cache.items():
+            roles_cache_dump[guild_id] = {}
+            for user, value in guild_data.items():
+                if value.expires > now:
+                    roles_cache_dump[guild_id][user] = asdict(value)
+        self.roles_cache_path.write_text(json.dumps(roles_cache_dump, indent=2))
 
     @command(name='rig')
     async def _rig(self, ctx: Context, *args):
@@ -131,7 +168,8 @@ class Rigging(Cog):
             await self.process_config(ctx, args[1:])
             return
         elif self.config[guild.id].needs_configuration():
-            await ctx.send(f'Please fully configure the settings first.\nCurrent configuration:\n{self.config[guild.id]}')
+            await ctx.send(
+                f'Please fully configure the settings first.\nCurrent configuration:\n{self.config[guild.id]}')
             return
 
         if args[0] == 'cancel':
@@ -179,8 +217,30 @@ class Rigging(Cog):
             f'Started a rigging in {self.config[guild.id].channel} for {amount} winners.\nDuration: {duration}s'
         )
         self.save_rigging()
-        await asyncio.sleep(duration)
+        now = int(time.time())
+        while now < self.rigging[guild.id].end_time:
+            await self.update_roles_cache(guild)
+            await asyncio.sleep(1)
+            now = int(time.time())
         await self.pick_winners(guild)
+
+    async def update_roles_cache(self, guild):
+        message = await self.get_rigging_message(guild)
+        eligible_users = await self.get_eligible_users(guild, message)
+        self.load_roles_cache()
+        expires = int(time.time()) + (60 * 60 * 24 * 2)
+        if guild.id not in self.roles_cache:
+            self.roles_cache[guild.id] = {}
+        try:
+            for user in eligible_users:
+                if user.name not in self.roles_cache[guild.id]:
+                    member: Member = await guild.fetch_member(user.id)
+                    roles = [role.name for role in member.roles]
+                    self.roles_cache[guild.id][user.name] = RolesForUser(roles=roles, expires=expires)
+        except RateLimited as e:
+            print(f'We got rate limited: {e}')
+        self.save_roles_cache()
+        pass
 
     def get_initial_message(self, guild):
         end_time = self.rigging[guild.id].end_time
@@ -197,7 +257,7 @@ class Rigging(Cog):
         eligible_users = await self.get_eligible_users(guild, message)
         number_of_winners_to_pick = self.rigging[guild.id].winners_count - len(self.rigging[guild.id].winners)
         number_of_winners_to_pick = min(number_of_winners_to_pick, len(eligible_users))
-        winners = random.sample(eligible_users, k=number_of_winners_to_pick)
+        winners = self._pick_winners_from_users(eligible_users, number_of_winners_to_pick, guild)
         self.possibly_rig_people_in(eligible_users, winners)
         random.shuffle(winners)
         winner_role = await self.resolve_winner_role(guild)
@@ -209,6 +269,29 @@ class Rigging(Cog):
         await message.edit(content=self.get_initial_message(guild) + f'\nWinners:\n{winners_as_string}')
         await self.send_coordination_message(guild)
         self.save_rigging()
+
+    def _pick_winners_from_users(self, eligible_users, number_of_winners_to_pick, guild):
+        winners = []
+        for _ in range(number_of_winners_to_pick):
+            weighted_list = []
+            for u in eligible_users:
+                if u not in winners:
+                    weighted_list += [u] * self._get_weight(u, guild)
+            if len(weighted_list):
+                selected_index = random.randint(0, len(weighted_list) - 1)
+                winners.append(weighted_list[selected_index])
+        return winners
+
+    def _get_weight(self, user, guild):
+        now = int(time.time())
+        weight = 1
+        if user.name in self.roles_cache[guild.id]:
+            roles_with_expiration = self.roles_cache[guild.id][user.name]
+            if roles_with_expiration.expires > now:
+                for role in roles_with_expiration.roles:
+                    weight_for_role = self.config[guild.id].weights.get(role, 1)
+                    weight = max(weight, weight_for_role)
+        return weight
 
     def possibly_rig_people_in(self, eligible_users: List[User], winners: List[Union[User, MockUser]]):
         """
@@ -298,6 +381,21 @@ class Rigging(Cog):
 
             if 'message' in property_to_modify:
                 new_value = ' '.join(args[1:])
+
+            if property_to_modify == 'weights':
+                if len(args) < 3:
+                    await ctx.send(
+                        'You need to give me the name of the role and the new weight for the role\n'
+                        'Example: `!rig config T90 Elite 4` _set weight for role "T90 Elite" to 4_'
+                    )
+                    return
+                role_name = ' '.join(args[1:-1])
+                try:
+                    weight = int(args[-1])
+                except ValueError:
+                    await ctx.send(f'New weight for {role_name} must be a number :neutral_face:')
+                    return
+                new_value = {**old_value, role_name: weight}
 
             self.config[guild.id].__setattr__(property_to_modify, new_value)
             self.save_config()

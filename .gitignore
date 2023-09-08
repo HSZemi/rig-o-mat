@@ -1,6 +1,7 @@
 .idea
 config.json
 rigging.json
+roles-cache.json
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
