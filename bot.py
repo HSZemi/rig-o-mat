@@ -48,7 +48,9 @@ class MockUser:
 
 class RigBot(Bot):
     def __init__(self):
-        super().__init__(command_prefix="!")
+        intents = Intents.default()
+        intents.message_content = True
+        super().__init__(command_prefix="!", intents=intents)
 
     async def on_ready(self):
         guild_list = '\n'.join([f'{guild.name}(id: {guild.id})' for guild in self.guilds])
@@ -252,7 +254,7 @@ class Rigging(Cog):
 
     async def get_eligible_users(self, guild: Guild, message: Message) -> List[User]:
         reaction = [reaction for reaction in message.reactions if reaction.emoji == '🎉'][0]
-        eligible_users = await reaction.users().flatten()
+        eligible_users = [user async for user in reaction.users()]
         excluded_users = self.get_excluded_users()
         eligible_users = [user for user in eligible_users if
                           user.id not in self.rigging[guild.id].winners
@@ -349,11 +351,12 @@ class Rigging(Cog):
                 print(e.text)
 
 
-def main():
+async def main():
     bot = RigBot()
-    bot.add_cog(Rigging(bot))
-    bot.run(TOKEN)
+    async with bot:
+        await bot.add_cog(Rigging(bot))
+        await bot.start(TOKEN)
 
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
