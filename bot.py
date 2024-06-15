@@ -220,7 +220,7 @@ class Rigging(Cog):
         now = int(time.time())
         while now < self.rigging[guild.id].end_time:
             await self.update_roles_cache(guild)
-            await asyncio.sleep(1)
+            await asyncio.sleep(5)
             now = int(time.time())
         await self.pick_winners(guild)
 
