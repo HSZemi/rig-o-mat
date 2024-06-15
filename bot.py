@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import random
+import re
 import textwrap
 import time
 from dataclasses import dataclass, asdict, field
@@ -69,6 +70,15 @@ class RigBot(Bot):
     async def on_ready(self):
         guild_list = '\n'.join([f'{guild.name}(id: {guild.id})' for guild in self.guilds])
         warning(f'{self.user} is connected to the following guilds:\n{guild_list}')
+
+    async def on_message(self, message: Message, /) -> None:
+        if not message.author.bot and message.channel.id in [912365929021702154, 908889618831798292]:
+            urls = re.findall(r'aoe2de://(\d/\d+)', message.content)
+            if urls:
+                response = ('Click here to join the game:\n' +
+                            '\n'.join([f'👉 https://aoe2.rocks#{url}' for url in list(dict.fromkeys(urls))]))
+                await message.reply(response, mention_author=False)
+        await self.process_commands(message)
 
 
 class Rigging(Cog):
