@@ -13,7 +13,7 @@ from typing import List, Dict, Optional, Union
 
 from discord import Intents
 from discord import Message, Role, User, Guild, Member, HTTPException, RateLimited
-from discord.ext.commands import Bot
+from discord.ext.commands import Bot, CommandInvokeError
 from discord.ext.commands import command, Cog, Context
 from dotenv import load_dotenv
 
@@ -333,8 +333,11 @@ class Rigging(Cog):
             member: Member = await guild.fetch_member(winner.id)
             info(f'Fetched winner {member.name}')
             info(f'Adding role {winner_role.name} to {member.name}')
-            await member.add_roles(winner_role, reason="rigged")
-            info(f'Added role {winner_role.name} to {member.name}')
+            try:
+                await member.add_roles(winner_role, reason="rigged")
+                info(f'Added role {winner_role.name} to {member.name}')
+            except CommandInvokeError as ex:
+                warning(f'Could not add role: {ex}')
         self.rigging[guild.id].winners += [w.id for w in winners]
         winners_as_string = "\n".join([f'<@{w}>' for w in self.rigging[guild.id].winners])
         info(f'Editing message to add winners')
