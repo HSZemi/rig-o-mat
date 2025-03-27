@@ -323,7 +323,7 @@ class Rigging(Cog):
         info(f'{number_of_winners_to_pick} winners to pick out of {len(eligible_users)} eligible users')
         winners = self._pick_winners_from_users(eligible_users, number_of_winners_to_pick, guild)
         info(f'Selected winners: {winners}')
-        self.possibly_rig_people_in(eligible_users, winners)
+        winners = self.possibly_rig_people_in(eligible_users, winners)
         info(f'Selected winners after extra rigging: {winners}')
         random.shuffle(winners)
         info(f'Shuffled winners: {winners}')
@@ -366,7 +366,8 @@ class Rigging(Cog):
                     weight = max(weight, weight_for_role)
         return weight
 
-    def possibly_rig_people_in(self, eligible_users: List[User], winners: List[Union[User, MockUser]]):
+    def possibly_rig_people_in(self, eligible_users: List[User],
+                               winners: List[Union[User, MockUser]]) -> List[Union[User, MockUser]]:
         """
         Ok, so this bot has the option to rig people in.
         It might get used. It might not.
@@ -374,15 +375,26 @@ class Rigging(Cog):
         You gotta live with that uncertainty 🙂
         And also: You cannot even be sure if this is the actual code that the bot runs 😶
         """
-        file_with_user_ids_to_rig_in = Path(__file__).parent / 'rigged.json'
-        if not file_with_user_ids_to_rig_in.is_file():
-            return
-        user_ids_to_rig_in = json.loads(file_with_user_ids_to_rig_in.read_text())
-        for i, id_ in enumerate(user_ids_to_rig_in):
-            if id_ not in [user.id for user in winners] and id_ in [user.id for user in eligible_users]:
-                if i < len(winners):
-                    winners[i] = MockUser(id=id_)
-        file_with_user_ids_to_rig_in.write_text('[\n]\n')
+        file_with_user_groups_to_rig_in = Path(__file__).parent / 'rigged.json'
+        if not file_with_user_groups_to_rig_in.is_file():
+            return winners
+        user_groups_to_rig_in: list[list[int]] = json.loads(file_with_user_groups_to_rig_in.read_text())
+        remaining_user_groups_to_rig_in = []
+        users_to_rig_in = set()
+        eligible_user_ids = [user.id for user in eligible_users]
+        for user_group in user_groups_to_rig_in:
+            eligible_ids_from_group = [user_id for user_id in user_group if user_id in eligible_user_ids]
+            next_users_to_rig_in = users_to_rig_in.union(set(eligible_ids_from_group))
+            if len(eligible_ids_from_group) == len(user_group) and len(next_users_to_rig_in) <= len(winners):
+                users_to_rig_in = next_users_to_rig_in
+            else:
+                remaining_user_groups_to_rig_in.append(user_group)
+        unrigged_winners = [user for user in winners if user.id not in users_to_rig_in]
+        new_winners = [MockUser(id=id_) for id_ in users_to_rig_in]
+        remaining_spots = len(winners) - len(users_to_rig_in)
+        new_winners.extend(unrigged_winners[:remaining_spots])
+        file_with_user_groups_to_rig_in.write_text(json.dumps(remaining_user_groups_to_rig_in))
+        return new_winners
 
     def get_excluded_users(self) -> List:
         """
