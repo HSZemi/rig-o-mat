@@ -11,6 +11,7 @@ from logging import basicConfig, info, warning, error
 from pathlib import Path
 from typing import List, Dict, Optional, Union
 
+import requests
 from discord import Intents
 from discord import Message, Role, User, Guild, Member, HTTPException, RateLimited
 from discord.ext.commands import Bot, CommandInvokeError
@@ -61,6 +62,26 @@ class MockUser:
     id: int
 
 
+def get_lobby_titles(urls: list[str])->dict[str, str]:
+    titles = {}
+    try:
+        result = requests.get('https://aoe-api.worldsedgelink.com/community/advertisement/findAdvertisements?title=age2')
+        result_json = result.json()
+        all_titles = {m['id']: m['description'] for m in result_json['matches']}
+        for url in urls:
+            id_ = int(url.split('/')[-1])
+            title = all_titles.get(id_, '')
+            if title:
+                title = title.replace(']', '')
+                title = title.replace(')', '')
+                title = title.replace('>', '')
+                title = f'**{title}**\n'
+            titles[url] = title
+    except Exception:
+        pass
+    return titles
+
+
 class RigBot(Bot):
     def __init__(self):
         intents = Intents.default()
@@ -75,8 +96,9 @@ class RigBot(Bot):
         if not message.author.bot and message.channel.id in [912365929021702154, 908889618831798292]:
             urls = re.findall(r'aoe2de://(\d/\d+)', message.content)
             if urls:
+                titles = get_lobby_titles(urls)
                 response = ('Click here to join the game:\n' +
-                            '\n'.join([f'👉 https://aoe2.rocks#{url}' for url in list(dict.fromkeys(urls))]))
+                            '\n'.join([f'{titles.get(url, "")}👉 https://aoe2.rocks#{url}' for url in list(dict.fromkeys(urls))]))
                 await message.reply(response, mention_author=False)
         await self.process_commands(message)
 
