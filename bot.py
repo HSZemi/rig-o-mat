@@ -75,7 +75,7 @@ def get_lobby_titles(urls: list[str])->dict[str, str]:
                 title = title.replace(']', '')
                 title = title.replace(')', '')
                 title = title.replace('>', '')
-                title = f'**{title}**\n'
+                title = f'Lobby Name: **{title}**\n'
             titles[url] = title
     except Exception:
         pass
@@ -97,8 +97,7 @@ class RigBot(Bot):
             urls = re.findall(r'aoe2de://(\d/\d+)', message.content)
             if urls:
                 titles = get_lobby_titles(urls)
-                response = ('Click here to join the game:\n' +
-                            '\n'.join([f'{titles.get(url, "")}👉 https://aoe2.rocks#{url}' for url in list(dict.fromkeys(urls))]))
+                response = ('\n'.join([f'{titles.get(url, "")}Click here to join the game:\n👉 https://aoe2.rocks#{url}' for url in list(dict.fromkeys(urls))]))
                 await message.reply(response, mention_author=False)
         await self.process_commands(message)
 
