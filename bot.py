@@ -6,26 +6,29 @@ import random
 import re
 import textwrap
 import time
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict, field, fields
 from logging import basicConfig, info, warning, error
 from pathlib import Path
 from typing import List, Dict, Optional, Union
 
 import requests
-from discord import Intents
+from discord import Intents, Interaction, app_commands, Object, TextChannel
 from discord import Message, Role, User, Guild, Member, HTTPException, RateLimited
-from discord.ext.commands import Bot, CommandInvokeError
-from discord.ext.commands import command, Cog, Context
+from discord.ext.commands import Bot, CommandInvokeError, Cog, GroupCog
 from dotenv import load_dotenv
 
 load_dotenv()
-TOKEN = os.getenv('DISCORD_TOKEN')
+TOKEN = os.getenv('DISCORD_TOKEN', 'missing_discord_token')
 DEFAULT_RIGGING_MESSAGE = 'Time to rig some people in! React with 🎉 to participate! Ends: %t'
-DEFAULT_COORDINATION_MESSAGE = '%r use this channel share the game data and coordinate. glhf!'
+DEFAULT_COORDINATION_MESSAGE = 'use this channel share the game data and coordinate. glhf!'
 LOGFORMAT = '%(asctime)s - %(levelname)s - %(funcName)s - %(message)s'
 
 LOGLEVEL = os.getenv('LOGLEVEL', 'WARNING')
 basicConfig(level=LOGLEVEL, format=LOGFORMAT)
+
+
+class IncompleteConfigurationException(Exception):
+    pass
 
 
 @dataclass
@@ -33,7 +36,6 @@ class RiggingConfig:
     channel: str = None
     duration: int = 120
     winner_role: str = None
-    admin_role: str = None
     message: str = DEFAULT_RIGGING_MESSAGE
     coordination_channel: str = None
     coordination_message: str = DEFAULT_COORDINATION_MESSAGE
@@ -43,10 +45,12 @@ class RiggingConfig:
         return self.channel is None or self.winner_role is None or self.coordination_channel is None
 
 
+FIELDS = {f.name for f in fields(RiggingConfig())}
+
 @dataclass
 class RiggingProperties:
     message_id: int = None
-    winners: List[str] = field(default_factory=list)
+    winners: List[int] = field(default_factory=list)
     winners_count: int = 0
     end_time: int = 0
 
@@ -62,47 +66,68 @@ class MockUser:
     id: int
 
 
-def get_lobby_titles(urls: list[str])->dict[str, str]:
-    titles = {}
+def get_lobby_title(lobby_id: int) -> str:
     try:
         result = requests.get('https://aoe-api.worldsedgelink.com/community/advertisement/findAdvertisements?title=age2')
         result_json = result.json()
         all_titles = {m['id']: m['description'] for m in result_json['matches']}
-        for url in urls:
-            id_ = int(url.split('/')[-1])
-            title = all_titles.get(id_, '')
-            if title:
-                title = title.replace(']', '')
-                title = title.replace(')', '')
-                title = title.replace('>', '')
-                title = f'Lobby Name: **{title}**\n'
-            titles[url] = title
+        title = all_titles.get(lobby_id, '')
+        if title:
+            title = title.replace(']', '')
+            title = title.replace(')', '')
+            title = title.replace('>', '')
+            title = f'**{title}**'
+        return title or '???'
     except Exception:
-        pass
-    return titles
+        return '???'
 
 
 class RigBot(Bot):
     def __init__(self):
         intents = Intents.default()
-        intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
+
+    async def setup_hook(self) -> None:
+        info('Adding cogs')
+        await self.add_cog(Rigging(self))
+        await self.add_cog(LobbyCog(self))
+        synced_commands = await self.tree.sync()
+        info(synced_commands)
 
     async def on_ready(self):
         guild_list = '\n'.join([f'{guild.name}(id: {guild.id})' for guild in self.guilds])
         warning(f'{self.user} is connected to the following guilds:\n{guild_list}')
 
-    async def on_message(self, message: Message, /) -> None:
-        if not message.author.bot and message.channel.id in [912365929021702154, 908889618831798292]:
-            urls = re.findall(r'aoe2de://(\d/\d+)', message.content)
-            if urls:
-                titles = get_lobby_titles(urls)
-                response = ('\n'.join([f'{titles.get(url, "")}Click here to join the game:\n👉 https://aoe2.rocks#{url}' for url in list(dict.fromkeys(urls))]))
-                await message.reply(response, mention_author=False)
-        await self.process_commands(message)
+
+class LobbyCog(Cog):
+    def __init__(self, bot: Bot):
+        self.bot = bot
+        super().__init__()
+
+    @app_commands.command(name='lobby')
+    async def _lobby(self, interaction: Interaction, lobby_url: str, password: str | None = None) -> None:
+        """Post neatly formatted lobby info
+
+        :param lobby_url: The url to the lobby in the format aoe2de://0/123456789
+        :param password: (Optional) the password for the lobby
+        :return:
+        """
+        if not re.match(r'aoe2de://(\d/\d+)', lobby_url):
+            await interaction.response.send_message("Invalid lobby url")
+            return
+        lobby_id = int(lobby_url[11:])
+        title = get_lobby_title(lobby_id)
+        response = f'Lobby Name: {title}'
+        if password:
+            response += f'\nPassword: `{password}`'
+        response += f'\nClick here to join the game:\n👉 https://aoe2.rocks#0/{lobby_id}'
+        info(f'Sending lobby message {lobby_url=} {password=}')
+        await interaction.response.send_message(response)
+        info(f'Sent lobby message {lobby_url=} {password=}')
 
 
-class Rigging(Cog):
+class Rigging(GroupCog, name="rig", description="Manage riggings"):
+    config_group = app_commands.Group(name="config", description="Configure riggings")
 
     def __init__(self, bot: Bot):
         self.bot = bot
@@ -115,6 +140,7 @@ class Rigging(Cog):
         self.load_config()
         self.load_rigging()
         self.load_roles_cache()
+        super().__init__()
 
     def load_config(self):
         info('Loading config')
@@ -123,6 +149,7 @@ class Rigging(Cog):
                 config_content = json.loads(self.config_path.read_text())
                 loaded_config = {}
                 for key in config_content:
+                    config_content[key] = {k: v for k, v in config_content[key].items() if k in FIELDS}
                     loaded_config[int(key)] = RiggingConfig(**config_content[key])
                 self.config = loaded_config
                 warning(f'Loaded config: {self.config}')
@@ -186,124 +213,6 @@ class Rigging(Cog):
         self.roles_cache_path.write_text(json.dumps(roles_cache_dump, indent=2))
         info('Saved roles cache')
 
-    @command(name='rig')
-    async def _rig(self, ctx: Context, *args):
-        message: Message = ctx.message
-        guild: Guild = ctx.guild
-        author: User = message.author
-        warning(f'Rig command used! user:{author.name}, args:{args}')
-
-        if guild.id not in self.config:
-            self.config[guild.id] = RiggingConfig()
-
-        if self.config[guild.id].admin_role:
-            info('Resolving admin role')
-            admin_role = await self.resolve_admin_role(guild)
-            info('Resolved admin role')
-            info('Fetching guild member (author)')
-            member = await guild.fetch_member(author.id)
-            info('Fetched guild member')
-            if admin_role not in member.roles:
-                info(f'Guild member {member.name} does not have the admin role {admin_role.name},'
-                      f' only these: {[r.name for r in member.roles]}.')
-                return
-
-        if not len(args):
-            info('No arguments given, printing help')
-            await self.print_help(ctx)
-            info('Printed help')
-            return
-
-        if args[0] == 'config':
-            info('Processing config')
-            await self.process_config(ctx, args[1:])
-            info('Processed config')
-            return
-        elif self.config[guild.id].needs_configuration():
-            info(f'Warning about incomplete configuration: {self.config[guild.id]}')
-            await ctx.send(
-                f'Please fully configure the settings first.\nCurrent configuration:\n{self.config[guild.id]}')
-            info('Warned about incomplete configuration')
-            return
-
-        if args[0] == 'cancel':
-            info('Executing cancel command')
-            await self.process_cancel(ctx)
-            info('Executed cancel command')
-            return
-
-        if args[0] == 'cleanup':
-            info('Cleaning up')
-            await self.process_cleanup(ctx)
-            info('Cleaned up')
-            return
-
-        try:
-            amount = int(args[0])
-            info(f'Rigging {amount} people')
-            await self.rig_amount(ctx, amount, args[1:])
-            info('Rigging completed')
-            return
-        except ValueError as e:
-            error(e)
-            info('Sending warning about unknown command')
-            await ctx.send('Unknown command :frowning:')
-            info('Sent warning about unknown command')
-
-    async def rig_amount(self, ctx, amount: int, args):
-        guild = ctx.guild
-        duration = self.config[guild.id].duration
-        if len(args) > 0:
-            if args[0].isnumeric():
-                duration = int(args[0])
-            elif args[0] == 'more':
-                if guild.id not in self.rigging or not self.rigging[guild.id]:
-                    info('Sending warning that there is no ongoing rigging')
-                    await ctx.send("No ongoing rigging.")
-                    info('Sent warning that there is no ongoing rigging')
-                    return
-                self.rigging[guild.id].winners_count += amount
-                await self.pick_winners(guild)
-                return
-            else:
-                info('Sending warning about unknown arguments')
-                await ctx.send(f'Unknown arguments :frowning:')
-                info('Sent warning about unknown arguments')
-                return
-        await self.cleanup_previous_riggings(guild)
-        self.rigging[guild.id] = RiggingProperties()
-        self.rigging[guild.id].winners_count = amount
-        self.rigging[guild.id].end_time = int(time.time()) + duration
-        channel_id = int(self.config[guild.id].channel[2:-1])
-        info(f'Retrieving channel {channel_id}')
-        channel = self.bot.get_channel(channel_id)
-        info('Retrieved channel')
-        info('Sending initial message')
-        message = await channel.send(self.get_initial_message(guild))
-        info('Sent initial message')
-        self.rigging[guild.id].message_id = message.id
-        info('Adding emoji reaction')
-        await message.add_reaction('🎉')
-        info('Added emoji reaction')
-        info('Sending confirmation message')
-        await ctx.send(
-            f'Started a rigging in {self.config[guild.id].channel} for {amount} winners.\nDuration: {duration}s'
-        )
-        info('Sent confirmation message')
-        self.save_rigging()
-        now = int(time.time())
-        info(f'Now is {now}')
-        info(f'End time is {self.rigging[guild.id].end_time}')
-        while now < self.rigging[guild.id].end_time:
-            await self.update_roles_cache(guild)
-            info('Sleeping')
-            await asyncio.sleep(5)
-            info('Done sleeping')
-            now = int(time.time())
-            info(f'Now is {now}')
-            info(f'End time is {self.rigging[guild.id].end_time}')
-        await self.pick_winners(guild)
-
     async def update_roles_cache(self, guild):
         message = await self.get_rigging_message(guild)
         eligible_users = await self.get_eligible_users(guild, message)
@@ -328,10 +237,6 @@ class Rigging(Cog):
     def get_initial_message(self, guild):
         end_time = self.rigging[guild.id].end_time
         return self.config[guild.id].message.replace('%t', f'<t:{end_time}>')
-
-    def get_coordination_message(self, guild):
-        winner_role = self.config[guild.id].winner_role
-        return self.config[guild.id].coordination_message.replace('%r', winner_role)
 
     async def pick_winners(self, guild: Guild):
         if not self.rigging[guild.id]:
@@ -433,25 +338,19 @@ class Rigging(Cog):
         excluded_users = json.loads(excluded_users_file.read_text())
         return excluded_users
 
-    async def send_coordination_message(self, guild):
+    async def send_coordination_message(self, guild: Guild):
         channel_id = int(self.config[guild.id].coordination_channel[2:-1])
         info(f'Retrieving channel {channel_id=}')
         channel = self.bot.get_channel(channel_id)
         info(f'Retrieved channel {channel_id=}')
         info('Sending coordination message')
-        await channel.send(self.get_coordination_message(guild))
+        await channel.send(self.config[guild.id].coordination_message)
         info('Sent coordination message')
 
-    async def resolve_winner_role(self, guild) -> Role:
+    async def resolve_winner_role(self, guild: Guild) -> Role:
         info('Resolving winner role')
         role = guild.get_role(int(self.config[guild.id].winner_role[3:-1]))
         info('Resolved winner role')
-        return role
-
-    async def resolve_admin_role(self, guild) -> Role:
-        info('Resolving admin role')
-        role = guild.get_role(int(self.config[guild.id].admin_role[3:-1]))
-        info('Resolved admin role')
         return role
 
     async def get_eligible_users(self, guild: Guild, message: Message) -> List[User]:
@@ -475,117 +374,7 @@ class Rigging(Cog):
         info('Fetched rigging message')
         return message
 
-    async def process_config(self, ctx, args):
-        guild = ctx.guild
-        if not len(args):
-            info('Sending current configuration')
-            await ctx.send(f'Current configuration:\n{self.config[guild.id]}')
-            info('Sent current configuration')
-            return
-
-        if len(args) < 2:
-            info('Sending config instructions')
-            await ctx.send(
-                'You need to give me the name and the new value to update a config setting\n'
-                'Example: `!rig config duration 1337` _set duration to 1337 seconds_'
-            )
-            info('Sent config instructions')
-            return
-
-        property_to_modify = args[0]
-        new_value_tmp = args[1]
-        if not hasattr(self.config[guild.id], property_to_modify):
-            info(f'Sending unknown property warning for {property_to_modify=}')
-            await ctx.send(f'Unknown property.\nAvailable properties: {self.config[guild.id]}')
-            info(f'Sent unknown property warning for {property_to_modify=}')
-            return
-        else:
-            old_value = self.config[guild.id].__getattribute__(property_to_modify)
-            new_value = new_value_tmp
-            try:
-                if isinstance(old_value, int):
-                    new_value = int(new_value_tmp)
-            except ValueError:
-                info('Sending warning that value should be a number')
-                await ctx.send(f'New value for {property_to_modify} must be a number :neutral_face:')
-                info('Sent warning that value should be a number')
-                return
-
-            if 'message' in property_to_modify:
-                new_value = ' '.join(args[1:])
-
-            if property_to_modify == 'weights':
-                if len(args) < 3:
-                    info('Sending weights instructions')
-                    await ctx.send(
-                        'You need to give me the name of the role and the new weight for the role\n'
-                        'Example: `!rig config T90 Elite 4` _set weight for role "T90 Elite" to 4_'
-                    )
-                    info('Sent weights instructions')
-                    return
-                role_name = ' '.join(args[1:-1])
-                try:
-                    weight = int(args[-1])
-                except ValueError:
-                    info('Sending warning that weight should be a number')
-                    await ctx.send(f'New weight for {role_name} must be a number :neutral_face:')
-                    info('Sent warning that weight should be a number')
-                    return
-                new_value = {**old_value, role_name: weight}
-
-            self.config[guild.id].__setattr__(property_to_modify, new_value)
-            self.save_config()
-            info('Sending modified settings information')
-            await ctx.send(
-                f'Modified setting {property_to_modify}: {old_value} → {new_value}\n'
-                f'New configuration:\n{self.config[guild.id]}')
-            info('Sent modified settings information')
-            return
-
-    async def process_cancel(self, ctx):
-        if ctx.guild.id not in self.rigging or not self.rigging[ctx.guild.id]:
-            info('Informing that there is no rigging to cancel')
-            await ctx.send(f'no rigging to cancel')
-            info('Informed that there is no rigging to cancel')
-            return
-        await self.cleanup_previous_riggings(ctx.guild)
-        message = await self.get_rigging_message(ctx.guild)
-        info('Editing initial message to say the rigging has been cancelled')
-        await message.edit(content=self.get_initial_message(ctx.guild) + f'\n_this rigging has been cancelled_')
-        info('Edited initial message to say the rigging has been cancelled')
-        self.rigging[ctx.guild.id] = None
-        info('Sending rigging cancelled confirmation')
-        await ctx.send(f'rigging cancelled')
-        info('Sent rigging cancelled confirmation')
-        self.save_rigging()
-
-    async def process_cleanup(self, ctx):
-        if ctx.guild.id not in self.rigging or not self.rigging[ctx.guild.id]:
-            info('Informing that there is no rigging to clean up')
-            await ctx.send(f'no rigging to clean up')
-            info('Informed that there is no rigging to clean up')
-            return
-        await self.cleanup_previous_riggings(ctx.guild)
-        info('Sending rigging cleanup confirmation')
-        await ctx.send(f'rigging cleaned up')
-        info('Sent rigging cleanup confirmation')
-
-    async def print_help(self, ctx: Context):
-        help_text = textwrap.dedent('''
-            Usage examples:
-            `!rig 7`  _start a new rigged drawing for seven people_
-            `!rig 7 180`  _start a new rigged drawing for seven people and 180 seconds instead of the default duration_
-            `!rig 2 more`  _rig two more people into the current game_
-            `!rig config`  _print the current configuration_
-            `!rig config channel #general`  _set the channel where the rigging takes place to #general_
-            `!rig cancel`  _cancel an ongoing rigging and reset the roles_
-            `!rig cleanup`  _only reset the roles_
-            ''')
-        info('Sending help message')
-        await ctx.send(help_text)
-        info('Sent help message')
-
-    async def cleanup_previous_riggings(self, guild):
+    async def cleanup_previous_riggings(self, guild: Guild):
         if guild.id not in self.rigging or not self.rigging[guild.id]:
             info('There is no rigging to clean up')
             return
@@ -604,11 +393,248 @@ class Rigging(Cog):
                 error(e.text)
 
 
+    async def pre_check(self, interaction: Interaction, skip_config_check=False)->None:
+        if interaction.guild.id not in self.config:
+            self.config[interaction.guild.id] = RiggingConfig()
+
+        if not skip_config_check and self.config[interaction.guild.id].needs_configuration():
+            info(f'Warning about incomplete configuration: {self.config[interaction.guild.id]}')
+            await interaction.response.send_message(
+                f'Please fully configure the settings first.\nCurrent configuration:\n{self.config[interaction.guild.id]}')
+            info('Warned about incomplete configuration')
+            raise IncompleteConfigurationException
+
+    @app_commands.command(name='help', description='Print usage examples')
+    async def _help(self, interaction: Interaction) -> None:
+        await self.pre_check(interaction)
+        help_text = textwrap.dedent('''
+                    Usage examples:
+                    `/rig start amount: 7`  _start a new rigged drawing for seven people_
+                    `/rig start amount: 7 duration: 180`  _start a new rigged drawing for seven people and 180 seconds instead of the default duration_
+                    `/rig more amount: 2`  _rig two more people into the current game_
+                    `/rig cancel`  _cancel an ongoing rigging and reset the roles_
+                    `/rig cleanup`  _only reset the roles_
+                    ''')
+        info('Sending help message')
+        await interaction.response.send_message(help_text)
+        info('Sent help message')
+
+    @config_group.command(name='show', description='Show the current configuration')
+    async def _config_show(self, interaction: Interaction) -> None:
+        assert interaction.guild_id
+        await self.pre_check(interaction, skip_config_check=True)
+        info('Sending current configuration')
+        await interaction.response.send_message(f'Current configuration:\n{self.config[interaction.guild_id]}\n')
+        info('Sent current configuration')
+
+    async def _set_config(self, interaction: Interaction, key: str, new_value: str | int) -> None:
+        assert interaction.guild_id
+        await self.pre_check(interaction, skip_config_check=True)
+        old_value = self.config[interaction.guild_id].__getattribute__(key)
+
+        self.config[interaction.guild_id].__setattr__(key, new_value)
+        self.save_config()
+        info('Sending modified settings information')
+        await interaction.response.send_message(
+            f'Modified setting {key}: {old_value} → {new_value}\n'
+            f'New configuration:\n{self.config[interaction.guild_id]}')
+        info('Sent modified settings information')
+        return
+
+    @config_group.command(name='channel')
+    async def _config_channel(self, interaction: Interaction, channel: TextChannel) -> None:
+        """Edit the channel for riggings
+
+        :param channel: The channel where riggings take place
+        :return:
+        """
+        property_to_modify = 'channel'
+        new_value = f"<#{channel.id}>"
+        await self._set_config(interaction, property_to_modify, new_value)
+
+    @config_group.command(name='duration')
+    async def _config_duration(self, interaction: Interaction, duration: int) -> None:
+        """Edit the default duration for riggings
+
+        :param duration: The new default duration of riggings in seconds
+        :return:
+        """
+        property_to_modify = 'duration'
+        new_value = duration
+        await self._set_config(interaction, property_to_modify, new_value)
+
+    @config_group.command(name='winner_role')
+    async def _config_winner_role(self, interaction: Interaction, role: Role) -> None:
+        """Edit the role that winners are assigned
+
+        :param role: The role that winners will be assigned
+        :return:
+        """
+        property_to_modify = 'winner_role'
+        new_value = f"<@&{role.id}>"
+        await self._set_config(interaction, property_to_modify, new_value)
+
+    @config_group.command(name='message')
+    async def _config_message(self, interaction: Interaction, message: str) -> None:
+        """Edit the message that announces a new rigging
+
+        :param message: The new message that will be posted for people to react to
+        :return:
+        """
+        property_to_modify = 'message'
+        new_value = message
+        await self._set_config(interaction, property_to_modify, new_value)
+
+    @config_group.command(name='coordination_channel')
+    async def _config_coordination_channel(self, interaction: Interaction, channel: TextChannel) -> None:
+        """Edit the coordination channel
+
+        :param channel: The channel where coordination takes place after riggings.
+         The winner_role should have access.
+        :return:
+        """
+        property_to_modify = 'coordination_channel'
+        new_value = f"<#{channel.id}>"
+        await self._set_config(interaction, property_to_modify, new_value)
+
+    @config_group.command(name='coordination_message')
+    async def _config_coordination_message(self, interaction: Interaction, message: str) -> None:
+        """Edit the message that gets posted in the coordination channel
+
+        :param message: The new message that will be posted in the coordination channel after winners are picked
+        :return:
+        """
+        property_to_modify = 'coordination_message'
+        new_value = message
+        await self._set_config(interaction, property_to_modify, new_value)
+
+    @config_group.command(name='weights', description='Edit the weights for riggings')
+    async def _config_weights(self, interaction: Interaction, role: Role, weight: int) -> None:
+        """Edit the weights for riggings
+
+        :param role: The role for which to set a new weight
+        :param weight: The new weight for that role
+        :return:
+        """
+        role_str = role.name
+        assert interaction.guild_id
+        await self.pre_check(interaction, skip_config_check=True)
+        old_value = self.config[interaction.guild_id].weights.get(role_str)
+        new_value = weight
+
+        self.config[interaction.guild_id].weights[role_str] = new_value
+        self.save_config()
+        info('Sending modified settings information')
+        await interaction.response.send_message(
+            f'Modified setting weights[{role_str}]: {old_value} → {new_value}\n'
+            f'New configuration:\n{self.config[interaction.guild_id]}')
+        info('Sent modified settings information')
+        return
+
+    @app_commands.command(name='cancel', description='Cancel the current rigging and reset the roles')
+    async def _cancel(self, interaction: Interaction) -> None:
+        await self.pre_check(interaction)
+        if interaction.guild_id not in self.rigging or not self.rigging[interaction.guild.id]:
+            info('Informing that there is no rigging to cancel')
+            await interaction.response.send_message(f'no rigging to cancel')
+            info('Informed that there is no rigging to cancel')
+            return
+        await self.cleanup_previous_riggings(interaction.guild)
+        message = await self.get_rigging_message(interaction.guild)
+        info('Editing initial message to say the rigging has been cancelled')
+        await message.edit(content=self.get_initial_message(interaction.guild) + f'\n_this rigging has been cancelled_')
+        info('Edited initial message to say the rigging has been cancelled')
+        self.rigging[interaction.guild.id] = None
+        info('Sending rigging cancelled confirmation')
+        await interaction.response.send_message(f'rigging cancelled')
+        info('Sent rigging cancelled confirmation')
+        self.save_rigging()
+
+    @app_commands.command(name='cleanup', description='Clean up the last rigging')
+    async def _cleanup(self, interaction: Interaction) -> None:
+        await self.pre_check(interaction)
+        if interaction.guild.id not in self.rigging or not self.rigging[interaction.guild.id]:
+            info('Informing that there is no rigging to clean up')
+            await interaction.response.send_message(f'no rigging to clean up')
+            info('Informed that there is no rigging to clean up')
+            return
+        await self.cleanup_previous_riggings(interaction.guild)
+        info('Sending rigging cleanup confirmation')
+        await interaction.response.send_message(f'rigging cleaned up')
+        info('Sent rigging cleanup confirmation')
+
+    @app_commands.command(name='start')
+    async def _start(self, interaction: Interaction, amount: int, duration: int | None = None) -> None:
+        """Start a new rigging
+
+        :param amount: The number of people to rig in
+        :param duration: (Optional) The duration of the rigging in seconds
+        :return:
+        """
+        await self.pre_check(interaction)
+        guild = interaction.guild
+        duration = duration or self.config[guild.id].duration
+        await self.cleanup_previous_riggings(guild)
+        self.rigging[guild.id] = RiggingProperties()
+        self.rigging[guild.id].winners_count = amount
+        self.rigging[guild.id].end_time = int(time.time()) + duration
+        channel_id = int(self.config[guild.id].channel[2:-1])
+        info(f'Retrieving channel {channel_id}')
+        channel = self.bot.get_channel(channel_id)
+        info('Retrieved channel')
+        info('Sending initial message')
+        message = await channel.send(self.get_initial_message(guild))
+        info('Sent initial message')
+        self.rigging[guild.id].message_id = message.id
+        info('Adding emoji reaction')
+        await message.add_reaction('🎉')
+        info('Added emoji reaction')
+        info('Sending confirmation message')
+        await interaction.response.send_message(
+            f'Started a rigging in {self.config[guild.id].channel} for {amount} winners.\nDuration: {duration}s'
+        )
+        info('Sent confirmation message')
+        self.save_rigging()
+        now = int(time.time())
+        info(f'Now is {now}')
+        info(f'End time is {self.rigging[guild.id].end_time}')
+        while self.rigging[guild.id] and now < self.rigging[guild.id].end_time:
+            await self.update_roles_cache(guild)
+            info('Sleeping')
+            await asyncio.sleep(5)
+            info('Done sleeping')
+            now = int(time.time())
+            info(f'Now is {now}')
+            if self.rigging[guild.id]:
+                info(f'End time is {self.rigging[guild.id].end_time}')
+            else:
+                warning('Rigging does not exist anymore')
+                return
+        await self.pick_winners(guild)
+
+    @app_commands.command(name='more')
+    async def _more(self, interaction: Interaction, amount: int) -> None:
+        """Add more people to the last rigging
+
+        :param amount: The number of additional people to rig in
+        :return:
+        """
+        await self.pre_check(interaction)
+        if interaction.guild.id not in self.rigging or not self.rigging[interaction.guild.id]:
+            info('Sending warning that there is no ongoing rigging')
+            await interaction.response.send_message("No ongoing rigging.")
+            info('Sent warning that there is no ongoing rigging')
+            return
+        self.rigging[interaction.guild.id].winners_count += amount
+        await self.pick_winners(interaction.guild)
+        info('Sending confirmation message')
+        await interaction.response.send_message(f"Added {amount} more")
+        info('Sent confirmation message')
+
+
 async def main():
     bot = RigBot()
     async with bot:
-        info('Adding cog')
-        await bot.add_cog(Rigging(bot))
         info('Starting bot')
         await bot.start(TOKEN)
 
