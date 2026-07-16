@@ -68,7 +68,8 @@ class MockUser:
 
 def get_lobby_title(lobby_id: int) -> str:
     try:
-        result = requests.get('https://aoe-api.worldsedgelink.com/community/advertisement/findAdvertisements?title=age2')
+        headers = {'User-Agent': 'T90 Rig-O-Mat 97.1'}
+        result = requests.get('https://aoe-api.worldsedgelink.com/community/advertisement/findAdvertisements?title=age2', headers=headers)
         result_json = result.json()
         all_titles = {m['id']: m['description'] for m in result_json['matches']}
         title = all_titles.get(lobby_id, '')
