@@ -126,6 +126,14 @@ class LobbyCog(Cog):
         await interaction.response.send_message(response)
         info(f'Sent lobby message {lobby_url=} {password=}')
 
+    async def on_message(self, message: Message, /) -> None:
+        if not message.author.bot and message.channel.id in [912365929021702154, 908889618831798292]:
+            mods = re.fullmatch(r'!mods', message.content)
+            if mods:
+                response = ('Only the host needs to setup mods. Anyone else will get them just by joining the game lobby!')
+                await message.reply(response, mention_author=False)
+        await self.process_commands(message)
+
 
 class Rigging(GroupCog, name="rig", description="Manage riggings"):
     config_group = app_commands.Group(name="config", description="Configure riggings")
