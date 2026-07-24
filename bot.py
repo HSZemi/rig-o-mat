@@ -113,8 +113,9 @@ class LobbyCog(Cog):
         :param password: (Optional) the password for the lobby
         :return:
         """
+        await interaction.response.defer()
         if not re.match(r'aoe2de://(\d/\d+)', lobby_url):
-            await interaction.response.send_message("Invalid lobby url")
+            await interaction.followup.send("Invalid lobby url")
             return
         lobby_id = int(lobby_url[11:])
         title = get_lobby_title(lobby_id)
@@ -123,7 +124,7 @@ class LobbyCog(Cog):
             response += f'\nPassword: `{password}`'
         response += f'\nClick here to join the game:\n👉 https://aoe2.rocks#0/{lobby_id}'
         info(f'Sending lobby message {lobby_url=} {password=}')
-        await interaction.response.send_message(response)
+        await interaction.followup.send(response)
         info(f'Sent lobby message {lobby_url=} {password=}')
 
 
@@ -400,13 +401,14 @@ class Rigging(GroupCog, name="rig", description="Manage riggings"):
 
         if not skip_config_check and self.config[interaction.guild.id].needs_configuration():
             info(f'Warning about incomplete configuration: {self.config[interaction.guild.id]}')
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f'Please fully configure the settings first.\nCurrent configuration:\n{self.config[interaction.guild.id]}')
             info('Warned about incomplete configuration')
             raise IncompleteConfigurationException
 
     @app_commands.command(name='help', description='Print usage examples')
     async def _help(self, interaction: Interaction) -> None:
+        await interaction.response.defer()
         await self.pre_check(interaction)
         help_text = textwrap.dedent('''
                     Usage examples:
@@ -417,18 +419,20 @@ class Rigging(GroupCog, name="rig", description="Manage riggings"):
                     `/rig cleanup`  _only reset the roles_
                     ''')
         info('Sending help message')
-        await interaction.response.send_message(help_text)
+        await interaction.followup.send(help_text)
         info('Sent help message')
 
     @config_group.command(name='show', description='Show the current configuration')
     async def _config_show(self, interaction: Interaction) -> None:
+        await interaction.response.defer()
         assert interaction.guild_id
         await self.pre_check(interaction, skip_config_check=True)
         info('Sending current configuration')
-        await interaction.response.send_message(f'Current configuration:\n{self.config[interaction.guild_id]}\n')
+        await interaction.followup.send(f'Current configuration:\n{self.config[interaction.guild_id]}\n')
         info('Sent current configuration')
 
     async def _set_config(self, interaction: Interaction, key: str, new_value: str | int) -> None:
+        await interaction.response.defer()
         assert interaction.guild_id
         await self.pre_check(interaction, skip_config_check=True)
         old_value = self.config[interaction.guild_id].__getattribute__(key)
@@ -436,7 +440,7 @@ class Rigging(GroupCog, name="rig", description="Manage riggings"):
         self.config[interaction.guild_id].__setattr__(key, new_value)
         self.save_config()
         info('Sending modified settings information')
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f'Modified setting {key}: {old_value} → {new_value}\n'
             f'New configuration:\n{self.config[interaction.guild_id]}')
         info('Sent modified settings information')
@@ -517,6 +521,7 @@ class Rigging(GroupCog, name="rig", description="Manage riggings"):
         :param weight: The new weight for that role
         :return:
         """
+        await interaction.response.defer()
         role_str = role.name
         assert interaction.guild_id
         await self.pre_check(interaction, skip_config_check=True)
@@ -526,7 +531,7 @@ class Rigging(GroupCog, name="rig", description="Manage riggings"):
         self.config[interaction.guild_id].weights[role_str] = new_value
         self.save_config()
         info('Sending modified settings information')
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f'Modified setting weights[{role_str}]: {old_value} → {new_value}\n'
             f'New configuration:\n{self.config[interaction.guild_id]}')
         info('Sent modified settings information')
@@ -534,10 +539,11 @@ class Rigging(GroupCog, name="rig", description="Manage riggings"):
 
     @app_commands.command(name='cancel', description='Cancel the current rigging and reset the roles')
     async def _cancel(self, interaction: Interaction) -> None:
+        await interaction.response.defer()
         await self.pre_check(interaction)
         if interaction.guild_id not in self.rigging or not self.rigging[interaction.guild.id]:
             info('Informing that there is no rigging to cancel')
-            await interaction.response.send_message(f'no rigging to cancel')
+            await interaction.followup.send(f'no rigging to cancel')
             info('Informed that there is no rigging to cancel')
             return
         await self.cleanup_previous_riggings(interaction.guild)
@@ -547,21 +553,22 @@ class Rigging(GroupCog, name="rig", description="Manage riggings"):
         info('Edited initial message to say the rigging has been cancelled')
         self.rigging[interaction.guild.id] = None
         info('Sending rigging cancelled confirmation')
-        await interaction.response.send_message(f'rigging cancelled')
+        await interaction.followup.send(f'rigging cancelled')
         info('Sent rigging cancelled confirmation')
         self.save_rigging()
 
     @app_commands.command(name='cleanup', description='Clean up the last rigging')
     async def _cleanup(self, interaction: Interaction) -> None:
+        await interaction.response.defer()
         await self.pre_check(interaction)
         if interaction.guild.id not in self.rigging or not self.rigging[interaction.guild.id]:
             info('Informing that there is no rigging to clean up')
-            await interaction.response.send_message(f'no rigging to clean up')
+            await interaction.followup.send(f'no rigging to clean up')
             info('Informed that there is no rigging to clean up')
             return
         await self.cleanup_previous_riggings(interaction.guild)
         info('Sending rigging cleanup confirmation')
-        await interaction.response.send_message(f'rigging cleaned up')
+        await interaction.followup.send(f'rigging cleaned up')
         info('Sent rigging cleanup confirmation')
 
     @app_commands.command(name='start')
@@ -572,6 +579,7 @@ class Rigging(GroupCog, name="rig", description="Manage riggings"):
         :param duration: (Optional) The duration of the rigging in seconds
         :return:
         """
+        await interaction.response.defer()
         await self.pre_check(interaction)
         guild = interaction.guild
         duration = duration or self.config[guild.id].duration
@@ -591,7 +599,7 @@ class Rigging(GroupCog, name="rig", description="Manage riggings"):
         await message.add_reaction('🎉')
         info('Added emoji reaction')
         info('Sending confirmation message')
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f'Started a rigging in {self.config[guild.id].channel} for {amount} winners.\nDuration: {duration}s'
         )
         info('Sent confirmation message')
@@ -620,16 +628,17 @@ class Rigging(GroupCog, name="rig", description="Manage riggings"):
         :param amount: The number of additional people to rig in
         :return:
         """
+        await interaction.response.defer()
         await self.pre_check(interaction)
         if interaction.guild.id not in self.rigging or not self.rigging[interaction.guild.id]:
             info('Sending warning that there is no ongoing rigging')
-            await interaction.response.send_message("No ongoing rigging.")
+            await interaction.followup.send("No ongoing rigging.")
             info('Sent warning that there is no ongoing rigging')
             return
         self.rigging[interaction.guild.id].winners_count += amount
         await self.pick_winners(interaction.guild)
         info('Sending confirmation message')
-        await interaction.response.send_message(f"Added {amount} more")
+        await interaction.followup.send(f"Added {amount} more")
         info('Sent confirmation message')
 
 
